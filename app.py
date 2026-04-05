@@ -29,7 +29,7 @@ import tempfile
 
 # ==================== CONFIGURATION API DEEPWINGS & iMorph ====================
 # Remplacer par vos valeurs réelles ou utiliser st.secrets
-DEEPWINGS_API_URL = st.secrets.get("DEEPWINGS_API_URL", "https://api.deepwings.org/v1/analyze")
+DEEPWINGS_API_URL = st.secrets.get("DEEPWINGS_API_URL", "")
 DEEPWINGS_API_KEY = st.secrets.get("DEEPWINGS_API_KEY", "")
 IMORPH_EXECUTABLE = st.secrets.get("IMORPH_EXECUTABLE", "./iMorph_src/iMorph.py")
 
@@ -38,7 +38,7 @@ def analyze_with_deepwings(image: Image.Image) -> dict:
     """
     Envoie l'image à l'API DeepWings et retourne les landmarks.
     """
-    if not DEEPWINGS_API_URL or DEEPWINGS_API_URL == "https://api.deepwings.org/v1/analyze":
+    if not DEEPWINGS_API_URL:
         return {"success": False, "error": "API DeepWings non configurée (URL manquante)."}
     
     try:
@@ -168,7 +168,7 @@ def analyze_image_hybrid(image: Image.Image) -> dict:
     """
     Tente d'abord DeepWings, puis iMorph en cas d'échec.
     """
-    if DEEPWINGS_API_URL and DEEPWINGS_API_URL != "https://api.deepwings.org/v1/analyze":
+    if DEEPWINGS_API_URL:
         result = analyze_with_deepwings(image)
         if result["success"]:
             return result
@@ -184,7 +184,7 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ==================== CSS (inchangé) ====================
+# ==================== GLOBAL CSS ====================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
@@ -232,7 +232,6 @@ header {visibility: hidden;}
     color: rgba(255,255,255,0.75) !important;
     font-size: 13px;
     padding: 8px 4px;
-    transition: color 0.2s;
 }
 [data-testid="stSidebar"] .stRadio label:hover {
     color: #F5C842 !important;
@@ -263,9 +262,6 @@ header {visibility: hidden;}
     font-family: 'Playfair Display', serif !important;
     font-size: 2rem !important;
     color: var(--text-main) !important;
-}
-[data-testid="stMetricDelta"] {
-    font-size: 12px !important;
 }
 [data-testid="stDataFrame"] {
     border-radius: 12px;
@@ -446,7 +442,7 @@ header {visibility: hidden;}
 </style>
 """, unsafe_allow_html=True)
 
-# ==================== SESSION STATE & DATA INITIALIZATION (inchangé) ====================
+# ==================== SESSION STATE & DATA INITIALIZATION ====================
 def init_state():
     if "ruches" not in st.session_state:
         st.session_state.ruches = pd.DataFrame([
@@ -569,7 +565,7 @@ def init_state():
 
 init_state()
 
-# ==================== HELPER FUNCTIONS (inchangées) ====================
+# ==================== HELPER FUNCTIONS ====================
 STATUS_COLORS = {
     "Excellent": "#22c55e", "Bon": "#3b82f6",
     "Attention": "#f97316", "Critique": "#ef4444"
@@ -687,7 +683,7 @@ def production_radar(ruche_row):
     )
     return fig
 
-# ==================== SIDEBAR (inchangé) ====================
+# ==================== SIDEBAR ====================
 with st.sidebar:
     st.markdown("""
     <div style="padding:16px 0 20px">
@@ -757,7 +753,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ==================== PAGE: DASHBOARD (inchangé) ====================
+# ==================== PAGE: DASHBOARD ====================
 if current_page == "dashboard":
     st.markdown('<div class="page-title">🐝 Vue d\'ensemble — ApiTrack Pro</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Tableau de bord centralisé · Saison 2024–2025</div>', unsafe_allow_html=True)
@@ -905,7 +901,7 @@ if current_page == "dashboard":
             st.markdown(ruche_card_html(r), unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
 
-# ==================== PAGE: RUCHES (inchangé) ====================
+# ==================== PAGE: RUCHES ====================
 elif current_page == "ruches":
     st.markdown('<div class="page-title">🏠 Gestion des Ruches</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Inventaire complet · Profils de production · Santé des colonies</div>', unsafe_allow_html=True)
@@ -1056,7 +1052,7 @@ elif current_page == "ruches":
                 st.success(f"✅ Ruche {nid} « {nnom} » enregistrée avec succès !")
                 st.balloons()
 
-# ==================== PAGE: INSPECTIONS (inchangé) ====================
+# ==================== PAGE: INSPECTIONS ====================
 elif current_page == "inspections":
     st.markdown('<div class="page-title">🔍 Inspections</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Journal de terrain · Suivi sanitaire · Historique complet</div>', unsafe_allow_html=True)
@@ -1106,7 +1102,7 @@ elif current_page == "inspections":
             </div>
             """, unsafe_allow_html=True)
 
-# ==================== PAGE: TRAITEMENTS (inchangé) ====================
+# ==================== PAGE: TRAITEMENTS ====================
 elif current_page == "traitements":
     st.markdown('<div class="page-title">💊 Traitements Vétérinaires</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Conformité réglementaire · Suivi anti-varroa · Historique médicamenteux</div>', unsafe_allow_html=True)
@@ -1156,7 +1152,7 @@ elif current_page == "traitements":
             </div>
             """, unsafe_allow_html=True)
 
-# ==================== PAGE: MIEL (inchangé) ====================
+# ==================== PAGE: MIEL ====================
 elif current_page == "miel":
     st.markdown('<div class="page-title">🍯 Production de Miel</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Récoltes · Qualité · Traçabilité · Analyse sensorielle</div>', unsafe_allow_html=True)
@@ -1250,7 +1246,7 @@ elif current_page == "miel":
     with tab3:
         st.dataframe(miel_rec.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
 
-# ==================== PAGE: POLLEN (inchangé) ====================
+# ==================== PAGE: POLLEN ====================
 elif current_page == "pollen":
     st.markdown('<div class="page-title">🌼 Production de Pollen</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Collecte · Séchage · Qualité pollinique · Traçabilité botanique</div>', unsafe_allow_html=True)
@@ -1354,7 +1350,7 @@ elif current_page == "pollen":
         }
         st.dataframe(pd.DataFrame(pal_data), use_container_width=True, hide_index=True)
 
-# ==================== PAGE: GELÉE ROYALE (inchangé) ====================
+# ==================== PAGE: GELÉE ROYALE ====================
 elif current_page == "gelee":
     st.markdown('<div class="page-title">👑 Gelée Royale</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Production · Qualité · Conservation · Commercialisation</div>', unsafe_allow_html=True)
@@ -1456,7 +1452,7 @@ elif current_page == "gelee":
                 columns={"Quantite_kg":"Quantité (kg)","Humidite_pct":"Humidité (%)"}),
                 use_container_width=True, hide_index=True)
 
-# ==================== PAGE: MORPHOMÉTRIE (MODIFIÉE AVEC IA) ====================
+# ==================== PAGE: MORPHOMÉTRIE AVEC IA ====================
 elif current_page == "morphometrie":
     st.markdown('<div class="page-title">🔬 Morphométrie des Abeilles</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Caractérisation morphologique selon Ruttner (1988) · Analyse discriminante · Classification raciale · Analyse IA par photo</div>', unsafe_allow_html=True)
@@ -1466,7 +1462,7 @@ elif current_page == "morphometrie":
         36 caractères mesurables : aile antérieure, aile postérieure, corps, patte. 
         Classification par analyse discriminante.""", "alert-info"), unsafe_allow_html=True)
 
-    # Création des 6 onglets (5 originaux + le nouveau IA)
+    # Création des 6 onglets (4 originaux + 2 IA)
     tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📷 Saisie mesures", "📐 Référentiel", "📊 Analyses comparatives", "📋 Historique", "🤖 Analyse IA par photo", "⚙️ Configuration IA"])
 
     # ========== ONGLET 1 : Saisie mesures (avec pré-remplissage automatique) ==========
@@ -1597,7 +1593,7 @@ elif current_page == "morphometrie":
                 if key in st.session_state:
                     del st.session_state[key]
 
-    # ========== ONGLET 2 : Référentiel (inchangé) ==========
+    # ========== ONGLET 2 : Référentiel ==========
     with tab2:
         section_header("📐 Caractères morphométriques de référence (Ruttner 1988 / Kandemir 2011)")
         ref_data = {
@@ -1626,7 +1622,7 @@ elif current_page == "morphometrie":
         for author, ref in refs:
             st.markdown(f"▸ **{author}** — {ref}")
 
-    # ========== ONGLET 3 : Analyses comparatives (inchangé) ==========
+    # ========== ONGLET 3 : Analyses comparatives ==========
     with tab3:
         section_header("📊 Analyse comparative des mesures")
         df_m = st.session_state.morph_analyses
@@ -1678,7 +1674,7 @@ elif current_page == "morphometrie":
         else:
             st.info("Enregistrez au moins 2 analyses morphométriques pour voir les comparaisons.")
 
-    # ========== ONGLET 4 : Historique (inchangé) ==========
+    # ========== ONGLET 4 : Historique ==========
     with tab4:
         st.dataframe(st.session_state.morph_analyses.sort_values("Date",ascending=False),
                      use_container_width=True, hide_index=True,
@@ -1686,7 +1682,7 @@ elif current_page == "morphometrie":
                          "Confiance_pct": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100),
                      })
 
-    # ========== ONGLET 5 : Analyse IA par photo (NOUVEAU) ==========
+    # ========== ONGLET 5 : Analyse IA par photo ==========
     with tab5:
         st.markdown("### 📸 Analyse automatique par photo")
         st.markdown("Prenez une photo nette de l'aile antérieure d'une abeille butineuse.")
@@ -1774,11 +1770,11 @@ elif current_page == "morphometrie":
         """)
         
         st.text_input("Chemin iMorph (actuel)", value=IMORPH_EXECUTABLE, disabled=True)
-        st.text_input("URL DeepWings", value=DEEPWINGS_API_URL, disabled=True)
+        st.text_input("URL DeepWings", value=DEEPWINGS_API_URL if DEEPWINGS_API_URL else "Non configurée", disabled=True)
         if st.button("Recharger la configuration"):
             st.rerun()
 
-# ==================== PAGE: GÉNÉTIQUE (inchangé) ====================
+# ==================== PAGE: GÉNÉTIQUE & RACES ====================
 elif current_page == "genetique":
     st.markdown('<div class="page-title">🧬 Génétique & Sélection</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Lignées reines · Élevage · VSH · Marqueurs génétiques · Programme de sélection</div>', unsafe_allow_html=True)
@@ -1840,7 +1836,7 @@ elif current_page == "genetique":
             </div>
             """, unsafe_allow_html=True)
 
-# ==================== PAGE: CARACTÉRISATION (inchangé) ====================
+# ==================== PAGE: CARACTÉRISATION ====================
 elif current_page == "caracterisation":
     st.markdown('<div class="page-title">📈 Caractérisation des Abeilles</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Profils de production · Langue & ailes · Résistance · Classification multiparamétrique</div>', unsafe_allow_html=True)
@@ -2114,7 +2110,7 @@ elif current_page == "caracterisation":
         except ImportError:
             st.info("scikit-learn requis pour l'analyse ACP. Installez-le avec : pip install scikit-learn")
 
-# ==================== PAGE: FLORE MELLIFÈRE (inchangé) ====================
+# ==================== PAGE: FLORE MELLIFÈRE ====================
 elif current_page == "flore":
     st.markdown('<div class="page-title">🌸 Flore Mellifère</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Calendrier de floraison · Valeur apicole · Région de l\'Oranie — Algérie</div>', unsafe_allow_html=True)
@@ -2147,7 +2143,7 @@ elif current_page == "flore":
         margin=dict(l=10,r=10,t=10,b=10))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
 
-# ==================== PAGE: MÉTÉO & MIELLÉE (inchangé) ====================
+# ==================== PAGE: MÉTÉO & MIELLÉE ====================
 elif current_page == "meteo":
     st.markdown('<div class="page-title">🌤️ Météo & Miellée</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Conditions de butinage · Prévisions · Indice de miellée · Tlemcen — Algérie</div>', unsafe_allow_html=True)
@@ -2190,7 +2186,7 @@ elif current_page == "meteo":
         margin=dict(l=10,r=10,t=10,b=10))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
 
-# ==================== PAGE: RAPPORTS (inchangé) ====================
+# ==================== PAGE: RAPPORTS ====================
 elif current_page == "rapports":
     st.markdown('<div class="page-title">📋 Rapports & Exports</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Rapports réglementaires · Analyses statistiques · Export données</div>', unsafe_allow_html=True)
@@ -2266,7 +2262,7 @@ elif current_page == "rapports":
                 use_container_width=True
             )
 
-# ==================== PAGE: ALERTES (inchangé) ====================
+# ==================== PAGE: ALERTES ====================
 elif current_page == "alertes":
     st.markdown('<div class="page-title">🚨 Alertes & Notifications</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Surveillance en temps réel · Priorisation intelligente · Actions correctives</div>', unsafe_allow_html=True)
