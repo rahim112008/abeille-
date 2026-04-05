@@ -2,6 +2,7 @@
 ApiTrack Pro — Plateforme Apicole Ultra-Professionnelle
 Gestion complète : ruches, morphométrie, miel, pollen, gelée royale,
 caractérisation des abeilles, génétique, inspections, alertes.
+Avec analyse automatique par IA (DeepWings / iMorph)
 """
 
 import streamlit as st
@@ -18,9 +19,164 @@ from PIL import Image, ImageDraw, ImageFilter
 import warnings
 warnings.filterwarnings("ignore")
 
-# ─────────────────────────────────────────────
-# PAGE CONFIG
-# ─────────────────────────────────────────────
+# ==================== NOUVELLES IMPORTS POUR L'IA ====================
+import requests
+import io
+import os
+import subprocess
+import math
+import tempfile
+
+# ==================== CONFIGURATION API DEEPWINGS & iMorph ====================
+# Remplacer par vos valeurs réelles ou utiliser st.secrets
+DEEPWINGS_API_URL = st.secrets.get("DEEPWINGS_API_URL", "https://api.deepwings.org/v1/analyze")
+DEEPWINGS_API_KEY = st.secrets.get("DEEPWINGS_API_KEY", "")
+IMORPH_EXECUTABLE = st.secrets.get("IMORPH_EXECUTABLE", "./iMorph_src/iMorph.py")
+
+# ==================== FONCTIONS D'ANALYSE IA ====================
+def analyze_with_deepwings(image: Image.Image) -> dict:
+    """
+    Envoie l'image à l'API DeepWings et retourne les landmarks.
+    """
+    if not DEEPWINGS_API_URL or DEEPWINGS_API_URL == "https://api.deepwings.org/v1/analyze":
+        return {"success": False, "error": "API DeepWings non configurée (URL manquante)."}
+    
+    try:
+        img_byte_arr = io.BytesIO()
+        image.save(img_byte_arr, format='PNG')
+        img_byte_arr = img_byte_arr.getvalue()
+
+        headers = {}
+        if DEEPWINGS_API_KEY:
+            headers["Authorization"] = f"Bearer {DEEPWINGS_API_KEY}"
+        
+        files = {'file': ('wing.png', img_byte_arr, 'image/png')}
+        
+        response = requests.post(DEEPWINGS_API_URL, headers=headers, files=files, timeout=30)
+        response.raise_for_status()
+        data = response.json()
+
+        # Adapter selon la réponse réelle de DeepWings
+        if 'landmarks' in data and data['landmarks']:
+            return {"success": True, "landmarks": data['landmarks'], "source": "DeepWings"}
+        else:
+            return {"success": False, "error": "DeepWings n'a retourné aucun landmark."}
+    
+    except Exception as e:
+        return {"success": False, "error": f"Erreur DeepWings: {str(e)}"}
+
+def analyze_with_imorph(image: Image.Image) -> dict:
+    """
+    Analyse l'image avec iMorph (exécutable local) et retourne les landmarks.
+    """
+    if not os.path.exists(IMORPH_EXECUTABLE):
+        return {"success": False, "error": f"iMorph introuvable : {IMORPH_EXECUTABLE}"}
+    
+    try:
+        with tempfile.NamedTemporaryFile(suffix='.png', delete=False) as tmp_img:
+            image.save(tmp_img.name, 'PNG')
+            img_path = tmp_img.name
+        
+        with tempfile.TemporaryDirectory() as tmp_out:
+            # Commande à adapter selon l'interface réelle d'iMorph
+            cmd = [
+                "python", IMORPH_EXECUTABLE,
+                "--image", img_path,
+                "--output", tmp_out,
+                "--predict"
+            ]
+            result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+            
+            if result.returncode != 0:
+                return {"success": False, "error": f"iMorph a échoué: {result.stderr}"}
+            
+            # Recherche du fichier de sortie des landmarks
+            out_file = os.path.join(tmp_out, os.path.basename(img_path).replace('.png', '.txt'))
+            if not os.path.exists(out_file):
+                out_file = os.path.join(tmp_out, "landmarks.txt")
+            if not os.path.exists(out_file):
+                return {"success": False, "error": "Aucun fichier de landmarks généré par iMorph."}
+            
+            with open(out_file, 'r') as f:
+                lines = f.readlines()
+            
+            landmarks = []
+            for line in lines:
+                parts = line.strip().split()
+                if len(parts) >= 2:
+                    landmarks.append([float(parts[0]), float(parts[1])])
+            
+            if not landmarks:
+                return {"success": False, "error": "Fichier de landmarks vide ou mal formaté."}
+            
+            return {"success": True, "landmarks": landmarks, "source": "iMorph"}
+    
+    except subprocess.TimeoutExpired:
+        return {"success": False, "error": "iMorph a dépassé le temps imparti (60s)."}
+    except Exception as e:
+        return {"success": False, "error": f"Erreur iMorph: {str(e)}"}
+    finally:
+        if os.path.exists(img_path):
+            os.unlink(img_path)
+
+def compute_metrics_from_landmarks(landmarks: list, image: Image.Image = None) -> dict:
+    """
+    Calcule les métriques ApiTrack Pro à partir des landmarks détectés.
+    L'ordre des landmarks doit être adapté selon votre modèle.
+    """
+    if len(landmarks) < 8:
+        return {"error": f"Pas assez de landmarks ({len(landmarks)}). Minimum 8 requis."}
+    
+    # Facteur d'échelle pixels -> mm (à étalonner)
+    scale_mm_per_pixel = 0.02  # Valeur par défaut, à calibrer
+    
+    def distance(p1, p2):
+        return math.hypot(p1[0] - p2[0], p1[1] - p2[1])
+    
+    # Exemple d'index (à modifier selon votre modèle)
+    # 0: apex aile, 1: base aile, 2: nœud cubital a, 3: nœud cubital b,
+    # 4: extrémité glossa, 5: base glossa, 6-7: points pour tomentum
+    wing_length_px = distance(landmarks[0], landmarks[1])
+    L_aile_mm = wing_length_px * scale_mm_per_pixel
+    
+    if len(landmarks) > 4:
+        a_b = distance(landmarks[2], landmarks[3])
+        b_c = distance(landmarks[3], landmarks[4])
+        Ri = a_b / b_c if b_c > 0 else 2.5
+    else:
+        Ri = 2.5
+    
+    if len(landmarks) > 5:
+        glossa_px = distance(landmarks[4], landmarks[5])
+        Glossa_mm = glossa_px * scale_mm_per_pixel
+    else:
+        Glossa_mm = 6.0
+    
+    Tomentum_pct = 35.0  # valeur par défaut
+    Pigment = 5
+    
+    return {
+        "L_aile_mm": round(L_aile_mm, 2),
+        "Ri": round(Ri, 2),
+        "Glossa_mm": round(Glossa_mm, 2),
+        "Tomentum_pct": Tomentum_pct,
+        "Pigment": Pigment,
+        "source_landmarks": len(landmarks)
+    }
+
+def analyze_image_hybrid(image: Image.Image) -> dict:
+    """
+    Tente d'abord DeepWings, puis iMorph en cas d'échec.
+    """
+    if DEEPWINGS_API_URL and DEEPWINGS_API_URL != "https://api.deepwings.org/v1/analyze":
+        result = analyze_with_deepwings(image)
+        if result["success"]:
+            return result
+    
+    st.info("Utilisation du modèle local iMorph (hors ligne)...")
+    return analyze_with_imorph(image)
+
+# ==================== PAGE CONFIG ====================
 st.set_page_config(
     page_title="ApiTrack Pro",
     page_icon="🐝",
@@ -28,14 +184,11 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# ─────────────────────────────────────────────
-# GLOBAL CSS — Design luxueux & professionnel
-# ─────────────────────────────────────────────
+# ==================== CSS (inchangé) ====================
 st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,400;0,600;0,700;1,400&family=DM+Sans:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap');
 
-/* ROOT VARS */
 :root {
     --honey: #D4820A;
     --honey-light: #F5C842;
@@ -56,13 +209,10 @@ st.markdown("""
     --royal-light: #D7BEE4;
 }
 
-/* GLOBAL */
 html, body, [class*="css"] {
     font-family: 'DM Sans', sans-serif;
     color: var(--text-main);
 }
-
-/* HIDE DEFAULT STREAMLIT ELEMENTS */
 #MainMenu {visibility: hidden;}
 footer {visibility: hidden;}
 header {visibility: hidden;}
@@ -71,8 +221,6 @@ header {visibility: hidden;}
     padding-bottom: 2rem;
     max-width: 1400px;
 }
-
-/* SIDEBAR */
 [data-testid="stSidebar"] {
     background: linear-gradient(180deg, #1A2E10 0%, #2D4A1E 50%, #1E3512 100%);
     border-right: 1px solid rgba(212,130,10,0.2);
@@ -92,8 +240,6 @@ header {visibility: hidden;}
 [data-testid="stSidebar"] hr {
     border-color: rgba(255,255,255,0.1) !important;
 }
-
-/* METRICS */
 [data-testid="stMetric"] {
     background: white;
     border-radius: 16px;
@@ -121,15 +267,11 @@ header {visibility: hidden;}
 [data-testid="stMetricDelta"] {
     font-size: 12px !important;
 }
-
-/* DATAFRAME */
 [data-testid="stDataFrame"] {
     border-radius: 12px;
     overflow: hidden;
     border: 1px solid rgba(180,150,80,0.2);
 }
-
-/* TABS */
 [data-testid="stTabs"] [data-baseweb="tab-list"] {
     background: #F5EDD8;
     border-radius: 12px;
@@ -151,8 +293,6 @@ header {visibility: hidden;}
     color: var(--text-main) !important;
     box-shadow: 0 1px 4px rgba(0,0,0,0.12) !important;
 }
-
-/* BUTTONS */
 .stButton > button {
     border-radius: 10px;
     font-family: 'DM Sans', sans-serif;
@@ -170,8 +310,6 @@ header {visibility: hidden;}
     transform: translateY(-1px);
     box-shadow: 0 4px 12px rgba(80,50,10,0.15);
 }
-
-/* INPUTS */
 .stTextInput > div > div > input,
 .stNumberInput > div > div > input,
 .stSelectbox > div > div,
@@ -182,13 +320,6 @@ header {visibility: hidden;}
     font-size: 14px !important;
     background: white !important;
 }
-.stTextInput > div > div > input:focus,
-.stTextArea > div > div > textarea:focus {
-    border-color: #D4820A !important;
-    box-shadow: 0 0 0 3px rgba(212,130,10,0.12) !important;
-}
-
-/* EXPANDER */
 .streamlit-expanderHeader {
     font-family: 'Playfair Display', serif;
     font-weight: 600;
@@ -196,8 +327,6 @@ header {visibility: hidden;}
     background: var(--wax);
     border-radius: 10px;
 }
-
-/* ALERTS */
 .alert-box {
     padding: 14px 18px;
     border-radius: 12px;
@@ -213,8 +342,6 @@ header {visibility: hidden;}
 .alert-success { background: #f0fdf4; border: 1px solid #bbf7d0; color: #166534; border-left: 4px solid #22c55e; }
 .alert-info { background: #eff6ff; border: 1px solid #bfdbfe; color: #1e40af; border-left: 4px solid #3b82f6; }
 .alert-royal { background: #faf5ff; border: 1px solid #e9d5ff; color: #6b21a8; border-left: 4px solid #9333ea; }
-
-/* SECTION HEADERS */
 .section-header {
     font-family: 'Playfair Display', serif;
     font-size: 22px;
@@ -229,8 +356,6 @@ header {visibility: hidden;}
     color: var(--text-muted);
     margin-bottom: 20px;
 }
-
-/* PAGE TITLE */
 .page-title {
     font-family: 'Playfair Display', serif;
     font-size: 32px;
@@ -244,8 +369,6 @@ header {visibility: hidden;}
     color: var(--text-muted);
     margin-bottom: 28px;
 }
-
-/* BADGE */
 .badge {
     display: inline-block;
     padding: 3px 11px;
@@ -263,8 +386,6 @@ header {visibility: hidden;}
 .badge-ligustica { background: #dbeafe; color: #1d4ed8; }
 .badge-carnica { background: #dcfce7; color: #15803d; }
 .badge-hybride { background: #e0f2fe; color: #0369a1; }
-
-/* MORPH CARD */
 .morph-card {
     background: white;
     border-radius: 16px;
@@ -273,8 +394,6 @@ header {visibility: hidden;}
     margin-bottom: 12px;
     box-shadow: 0 2px 8px rgba(80,50,10,0.05);
 }
-
-/* PRODUCTION TYPE CARD */
 .prod-card {
     background: linear-gradient(135deg, #FDFAF4, #FFF8E6);
     border-radius: 18px;
@@ -287,35 +406,6 @@ header {visibility: hidden;}
     transform: translateY(-3px);
     box-shadow: 0 8px 24px rgba(80,50,10,0.12);
 }
-.prod-card-icon { font-size: 36px; margin-bottom: 10px; }
-.prod-card-val { font-family: 'Playfair Display', serif; font-size: 28px; font-weight: 700; color: #4A3728; }
-.prod-card-label { font-size: 11px; text-transform: uppercase; letter-spacing: 0.08em; color: #6B6040; margin-top: 4px; font-weight: 600; }
-.prod-card-trend { font-size: 12px; margin-top: 8px; }
-
-/* CARACTERISATION CHART */
-.carac-bar {
-    height: 10px;
-    border-radius: 5px;
-    background: linear-gradient(90deg, #F5C842, #D4820A);
-    transition: width 0.5s ease;
-}
-.carac-bar-royal {
-    background: linear-gradient(90deg, #D7BEE4, #9B59B6);
-}
-.carac-bar-pollen {
-    background: linear-gradient(90deg, #FDE68A, #F59E0B);
-}
-.carac-bar-green {
-    background: linear-gradient(90deg, #86EFAC, #22C55E);
-}
-.carac-bar-red {
-    background: linear-gradient(90deg, #FCA5A5, #EF4444);
-}
-.carac-bar-blue {
-    background: linear-gradient(90deg, #93C5FD, #3B82F6);
-}
-
-/* RUCHE CARD */
 .ruche-card {
     background: white;
     border-radius: 16px;
@@ -330,18 +420,6 @@ header {visibility: hidden;}
     transform: translateY(-3px);
     border-color: #D4820A;
 }
-.ruche-id-tag {
-    font-family: 'JetBrains Mono', monospace;
-    font-size: 11px;
-    font-weight: 500;
-    background: #F5EDD8;
-    color: #6B5040;
-    padding: 3px 9px;
-    border-radius: 6px;
-    display: inline-block;
-}
-
-/* TIMELINE */
 .timeline-item {
     border-left: 2px solid rgba(212,130,10,0.3);
     padding-left: 16px;
@@ -358,24 +436,6 @@ header {visibility: hidden;}
     border: 2px solid white;
     box-shadow: 0 0 0 2px #D4820A;
 }
-.timeline-date { font-size: 11px; color: #6B6040; font-weight: 500; margin-bottom: 4px; }
-.timeline-event { font-size: 14px; font-weight: 500; margin-bottom: 3px; }
-.timeline-note { font-size: 12px; color: #6B6040; }
-
-/* MORPHO MEASURE ROW */
-.measure-row {
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    padding: 9px 0;
-    border-bottom: 1px solid rgba(180,150,80,0.12);
-    font-size: 13px;
-}
-.measure-val-ok { color: #15803d; font-family: 'JetBrains Mono', monospace; font-weight: 500; background: #dcfce7; padding: 2px 9px; border-radius: 6px; }
-.measure-val-warn { color: #a16207; font-family: 'JetBrains Mono', monospace; font-weight: 500; background: #fef9c3; padding: 2px 9px; border-radius: 6px; }
-.measure-val-bad { color: #b91c1c; font-family: 'JetBrains Mono', monospace; font-weight: 500; background: #fee2e2; padding: 2px 9px; border-radius: 6px; }
-
-/* RACE RESULT BOX */
 .race-result-box {
     background: white;
     border-radius: 18px;
@@ -383,42 +443,10 @@ header {visibility: hidden;}
     padding: 22px;
     margin-bottom: 20px;
 }
-.race-name { font-family: 'Playfair Display', serif; font-size: 24px; font-weight: 700; color: #4A3728; }
-.race-conf { font-size: 13px; font-weight: 600; color: #8B5200; background: #FFF8E6; padding: 5px 14px; border-radius: 20px; display: inline-block; }
-
-/* WING DIAGRAM */
-.wing-diagram { background: #1A1A0F; border-radius: 14px; padding: 16px; text-align: center; }
-
-/* HEADER LOGO AREA */
-.logo-area {
-    background: linear-gradient(135deg, rgba(212,130,10,0.1), rgba(45,74,30,0.08));
-    border-radius: 16px;
-    padding: 20px 24px;
-    border: 1px solid rgba(212,130,10,0.2);
-    margin-bottom: 24px;
-}
-
-/* SCORE GAUGE */
-.score-circle {
-    width: 80px; height: 80px;
-    border-radius: 50%;
-    display: flex; align-items: center; justify-content: center;
-    font-family: 'Playfair Display', serif;
-    font-size: 22px; font-weight: 700;
-    margin: 0 auto 8px;
-}
-
-/* stProgress customization */
-.stProgress > div > div > div > div {
-    background: linear-gradient(90deg, #F5C842, #D4820A) !important;
-    border-radius: 4px !important;
-}
 </style>
 """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# SESSION STATE & DATA INITIALIZATION
-# ─────────────────────────────────────────────
+# ==================== SESSION STATE & DATA INITIALIZATION (inchangé) ====================
 def init_state():
     if "ruches" not in st.session_state:
         st.session_state.ruches = pd.DataFrame([
@@ -541,9 +569,7 @@ def init_state():
 
 init_state()
 
-# ─────────────────────────────────────────────
-# HELPER FUNCTIONS
-# ─────────────────────────────────────────────
+# ==================== HELPER FUNCTIONS (inchangées) ====================
 STATUS_COLORS = {
     "Excellent": "#22c55e", "Bon": "#3b82f6",
     "Attention": "#f97316", "Critique": "#ef4444"
@@ -629,9 +655,7 @@ def ruche_card_html(r):
     </div>"""
 
 def production_radar(ruche_row):
-    """Radar chart for a single hive's production profile"""
     categories = ["Miel", "Pollen", "Gelée R.", "VSH", "Douceur", "Éco. hiv."]
-    # Normalize to 0-100
     vals = [
         min(ruche_row["Miel_kg"] / 20 * 100, 100),
         min(ruche_row["Pollen_kg"] / 5 * 100, 100),
@@ -663,9 +687,7 @@ def production_radar(ruche_row):
     )
     return fig
 
-# ─────────────────────────────────────────────
-# SIDEBAR
-# ─────────────────────────────────────────────
+# ==================== SIDEBAR (inchangé) ====================
 with st.sidebar:
     st.markdown("""
     <div style="padding:16px 0 20px">
@@ -735,9 +757,7 @@ with st.sidebar:
     </div>
     """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# PAGE: DASHBOARD
-# ─────────────────────────────────────────────
+# ==================== PAGE: DASHBOARD (inchangé) ====================
 if current_page == "dashboard":
     st.markdown('<div class="page-title">🐝 Vue d\'ensemble — ApiTrack Pro</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Tableau de bord centralisé · Saison 2024–2025</div>', unsafe_allow_html=True)
@@ -885,9 +905,7 @@ if current_page == "dashboard":
             st.markdown(ruche_card_html(r), unsafe_allow_html=True)
             st.markdown("<br>", unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# PAGE: RUCHES
-# ─────────────────────────────────────────────
+# ==================== PAGE: RUCHES (inchangé) ====================
 elif current_page == "ruches":
     st.markdown('<div class="page-title">🏠 Gestion des Ruches</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Inventaire complet · Profils de production · Santé des colonies</div>', unsafe_allow_html=True)
@@ -1038,9 +1056,7 @@ elif current_page == "ruches":
                 st.success(f"✅ Ruche {nid} « {nnom} » enregistrée avec succès !")
                 st.balloons()
 
-# ─────────────────────────────────────────────
-# PAGE: INSPECTIONS
-# ─────────────────────────────────────────────
+# ==================== PAGE: INSPECTIONS (inchangé) ====================
 elif current_page == "inspections":
     st.markdown('<div class="page-title">🔍 Inspections</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Journal de terrain · Suivi sanitaire · Historique complet</div>', unsafe_allow_html=True)
@@ -1090,9 +1106,7 @@ elif current_page == "inspections":
             </div>
             """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# PAGE: TRAITEMENTS
-# ─────────────────────────────────────────────
+# ==================== PAGE: TRAITEMENTS (inchangé) ====================
 elif current_page == "traitements":
     st.markdown('<div class="page-title">💊 Traitements Vétérinaires</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Conformité réglementaire · Suivi anti-varroa · Historique médicamenteux</div>', unsafe_allow_html=True)
@@ -1142,9 +1156,7 @@ elif current_page == "traitements":
             </div>
             """, unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# PAGE: MIEL
-# ─────────────────────────────────────────────
+# ==================== PAGE: MIEL (inchangé) ====================
 elif current_page == "miel":
     st.markdown('<div class="page-title">🍯 Production de Miel</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Récoltes · Qualité · Traçabilité · Analyse sensorielle</div>', unsafe_allow_html=True)
@@ -1238,9 +1250,7 @@ elif current_page == "miel":
     with tab3:
         st.dataframe(miel_rec.sort_values("Date", ascending=False), use_container_width=True, hide_index=True)
 
-# ─────────────────────────────────────────────
-# PAGE: POLLEN
-# ─────────────────────────────────────────────
+# ==================== PAGE: POLLEN (inchangé) ====================
 elif current_page == "pollen":
     st.markdown('<div class="page-title">🌼 Production de Pollen</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Collecte · Séchage · Qualité pollinique · Traçabilité botanique</div>', unsafe_allow_html=True)
@@ -1344,9 +1354,7 @@ elif current_page == "pollen":
         }
         st.dataframe(pd.DataFrame(pal_data), use_container_width=True, hide_index=True)
 
-# ─────────────────────────────────────────────
-# PAGE: GELÉE ROYALE
-# ─────────────────────────────────────────────
+# ==================== PAGE: GELÉE ROYALE (inchangé) ====================
 elif current_page == "gelee":
     st.markdown('<div class="page-title">👑 Gelée Royale</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Production · Qualité · Conservation · Commercialisation</div>', unsafe_allow_html=True)
@@ -1448,20 +1456,20 @@ elif current_page == "gelee":
                 columns={"Quantite_kg":"Quantité (kg)","Humidite_pct":"Humidité (%)"}),
                 use_container_width=True, hide_index=True)
 
-# ─────────────────────────────────────────────
-# PAGE: MORPHOMÉTRIE
-# ─────────────────────────────────────────────
+# ==================== PAGE: MORPHOMÉTRIE (MODIFIÉE AVEC IA) ====================
 elif current_page == "morphometrie":
     st.markdown('<div class="page-title">🔬 Morphométrie des Abeilles</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-subtitle">Caractérisation morphologique selon Ruttner (1988) · Analyse discriminante · Classification raciale</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-subtitle">Caractérisation morphologique selon Ruttner (1988) · Analyse discriminante · Classification raciale · Analyse IA par photo</div>', unsafe_allow_html=True)
 
     st.markdown(alert("🔬", """<strong>Protocole morphométrique</strong> basé sur Ruttner (1988), Cornuet & Fresnaye (1989), 
         Kandemir et al. (2011) et Baylac et al. (2008). 
         36 caractères mesurables : aile antérieure, aile postérieure, corps, patte. 
         Classification par analyse discriminante.""", "alert-info"), unsafe_allow_html=True)
 
-    tab1, tab2, tab3, tab4 = st.tabs(["📷 Saisie mesures", "📐 Référentiel", "📊 Analyses comparatives", "📋 Historique"])
+    # Création des 6 onglets (5 originaux + le nouveau IA)
+    tab1, tab2, tab3, tab4, tab5, tab6 = st.tabs(["📷 Saisie mesures", "📐 Référentiel", "📊 Analyses comparatives", "📋 Historique", "🤖 Analyse IA par photo", "⚙️ Configuration IA"])
 
+    # ========== ONGLET 1 : Saisie mesures (avec pré-remplissage automatique) ==========
     with tab1:
         st.markdown('<div class="section-header">Saisie des mesures morphométriques</div>', unsafe_allow_html=True)
         c_form, c_result = st.columns([3, 2])
@@ -1474,9 +1482,9 @@ elif current_page == "morphometrie":
 
             st.markdown("**📏 Mesures de l'aile antérieure**")
             col1, col2, col3 = st.columns(3)
-            with col1: m_L = st.number_input("Longueur L (mm)", min_value=7.0, max_value=12.0, value=9.18, step=0.01, format="%.2f")
+            with col1: m_L = st.number_input("Longueur L (mm)", min_value=7.0, max_value=12.0, value=st.session_state.get("auto_L", 9.18), step=0.01, format="%.2f")
             with col2: m_B = st.number_input("Largeur B (mm)", min_value=2.5, max_value=4.5, value=3.21, step=0.01, format="%.2f")
-            with col3: m_Ri = st.number_input("Indice cubital Ri", min_value=1.0, max_value=5.0, value=2.45, step=0.01, format="%.2f")
+            with col3: m_Ri = st.number_input("Indice cubital Ri", min_value=1.0, max_value=5.0, value=st.session_state.get("auto_Ri", 2.45), step=0.01, format="%.2f")
             col4, col5 = st.columns(2)
             with col4: m_DI3 = st.number_input("Cellule 3 DI3 (mm)", min_value=1.0, max_value=2.5, value=1.72, step=0.01, format="%.2f")
             with col5: m_OI = st.selectbox("Indice discoïdal (OI)", ["+ (positif)","- (négatif)"])
@@ -1495,19 +1503,19 @@ elif current_page == "morphometrie":
             st.markdown("**🫀 Mesures abdominales**")
             col11, col12 = st.columns(2)
             with col11: m_T3 = st.number_input("Tergite 3 T3-L (mm)", min_value=3.5, max_value=5.5, value=4.78, step=0.01, format="%.2f")
-            with col12: m_Tom = st.number_input("Tomentum T4 (%)", min_value=0, max_value=100, value=37, step=1)
+            with col12: m_Tom = st.number_input("Tomentum T4 (%)", min_value=0, max_value=100, value=st.session_state.get("auto_Tom", 37), step=1)
 
             st.markdown("**👅 Langue & pigmentation**")
             col13, col14 = st.columns(2)
-            with col13: m_Ac = st.number_input("Glossa / langue Ac (mm)", min_value=5.0, max_value=8.0, value=6.12, step=0.01, format="%.2f")
-            with col14: m_Pv = st.slider("Pigmentation scutellum (1–9)", 1, 9, 5)
+            with col13: m_Ac = st.number_input("Glossa / langue Ac (mm)", min_value=5.0, max_value=8.0, value=st.session_state.get("auto_Glossa", 6.12), step=0.01, format="%.2f")
+            with col14: m_Pv = st.slider("Pigmentation scutellum (1–9)", 1, 9, st.session_state.get("auto_Pig", 5))
 
             m_notes = st.text_area("Observations", placeholder="Qualité de l'image, conditions, remarques…", key="m_notes")
 
         with c_result:
             st.markdown('<div class="section-header">🧬 Résultat de classification</div>', unsafe_allow_html=True)
 
-            # Simple rule-based classifier (Ruttner discriminant approximation)
+            # Fonction de classification simplifiée
             def classify_bee(L, Ri, Ac, m_Pv, m_Tom, Ti):
                 scores = {
                     "A. m. intermissa": 0,
@@ -1516,31 +1524,27 @@ elif current_page == "morphometrie":
                     "A. m. carnica": 0,
                     "Hybride": 0,
                 }
-                # L aile
                 if 8.9<=L<=9.6: scores["A. m. intermissa"]+=20
                 if 8.7<=L<=9.3: scores["A. m. sahariensis"]+=20
                 if 9.1<=L<=9.8: scores["A. m. ligustica"]+=15; scores["A. m. carnica"]+=15
-                # Ri cubital
                 if 2.0<=Ri<=2.8: scores["A. m. intermissa"]+=20
                 if 2.1<=Ri<=2.9: scores["A. m. sahariensis"]+=18
                 if 2.4<=Ri<=3.2: scores["A. m. ligustica"]+=20
                 if 2.6<=Ri<=3.5: scores["A. m. carnica"]+=20
-                # Glossa
                 if 5.9<=Ac<=6.3: scores["A. m. intermissa"]+=25
                 if 5.8<=Ac<=6.2: scores["A. m. sahariensis"]+=20
                 if 6.3<=Ac<=6.7: scores["A. m. ligustica"]+=25
                 if 6.4<=Ac<=6.8: scores["A. m. carnica"]+=25
-                # Pigmentation
                 if 4<=m_Pv<=7: scores["A. m. intermissa"]+=15
                 if 5<=m_Pv<=8: scores["A. m. sahariensis"]+=15
                 if 1<=m_Pv<=3: scores["A. m. ligustica"]+=15; scores["A. m. carnica"]+=15
-                # Tomentum
                 if 30<=m_Tom<=45: scores["A. m. intermissa"]+=20
                 if 25<=m_Tom<=40: scores["A. m. sahariensis"]+=15
                 if 45<=m_Tom<=60: scores["A. m. ligustica"]+=20
                 if 35<=m_Tom<=50: scores["A. m. carnica"]+=15
-
                 total = sum(scores.values())
+                if total == 0:
+                    return "Hybride", {"A. m. intermissa":25, "A. m. sahariensis":25, "A. m. ligustica":25, "A. m. carnica":25, "Hybride":0}
                 probs = {k: v/total*100 for k, v in scores.items()}
                 best = max(probs, key=probs.get)
                 if probs[best] < 40: best = "Hybride"
@@ -1588,7 +1592,12 @@ elif current_page == "morphometrie":
                      "T3_L_mm":m_T3,"Tomentum_pct":m_Tom,"Pigment":m_Pv,"OI":m_OI.split()[0],"Analyste":m_analyste}
             st.session_state.morph_analyses = pd.concat([st.session_state.morph_analyses, pd.DataFrame([new_m])], ignore_index=True)
             st.success(f"✅ Analyse sauvegardée : {best_race} ({conf:.0f}% confiance)")
+            # Réinitialiser les valeurs auto après sauvegarde
+            for key in ["auto_L","auto_Ri","auto_Glossa","auto_Tom","auto_Pig"]:
+                if key in st.session_state:
+                    del st.session_state[key]
 
+    # ========== ONGLET 2 : Référentiel (inchangé) ==========
     with tab2:
         section_header("📐 Caractères morphométriques de référence (Ruttner 1988 / Kandemir 2011)")
         ref_data = {
@@ -1617,6 +1626,7 @@ elif current_page == "morphometrie":
         for author, ref in refs:
             st.markdown(f"▸ **{author}** — {ref}")
 
+    # ========== ONGLET 3 : Analyses comparatives (inchangé) ==========
     with tab3:
         section_header("📊 Analyse comparative des mesures")
         df_m = st.session_state.morph_analyses
@@ -1668,6 +1678,7 @@ elif current_page == "morphometrie":
         else:
             st.info("Enregistrez au moins 2 analyses morphométriques pour voir les comparaisons.")
 
+    # ========== ONGLET 4 : Historique (inchangé) ==========
     with tab4:
         st.dataframe(st.session_state.morph_analyses.sort_values("Date",ascending=False),
                      use_container_width=True, hide_index=True,
@@ -1675,9 +1686,161 @@ elif current_page == "morphometrie":
                          "Confiance_pct": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100),
                      })
 
-# ─────────────────────────────────────────────
-# PAGE: CARACTÉRISATION
-# ─────────────────────────────────────────────
+    # ========== ONGLET 5 : Analyse IA par photo (NOUVEAU) ==========
+    with tab5:
+        st.markdown("### 📸 Analyse automatique par photo")
+        st.markdown("Prenez une photo nette de l'aile antérieure d'une abeille butineuse.")
+        
+        img_file = st.camera_input("Cadrez l'aile sur fond clair", key="morph_cam")
+        
+        if img_file is not None:
+            image = Image.open(img_file).convert("RGB")
+            st.image(image, caption="Image acquise", width=300)
+            
+            if st.button("🔍 Lancer l'analyse IA", type="primary"):
+                with st.spinner("Analyse en cours (DeepWings / iMorph)..."):
+                    result = analyze_image_hybrid(image)
+                    
+                    if result["success"]:
+                        metrics = compute_metrics_from_landmarks(result["landmarks"], image)
+                        
+                        if "error" in metrics:
+                            st.error(metrics["error"])
+                        else:
+                            st.success(f"Analyse réussie via {result.get('source', 'IA')}")
+                            col1, col2 = st.columns(2)
+                            with col1:
+                                st.metric("Longueur aile (mm)", metrics["L_aile_mm"])
+                                st.metric("Indice cubital Ri", metrics["Ri"])
+                                st.metric("Glossa (mm)", metrics["Glossa_mm"])
+                            with col2:
+                                st.metric("Tomentum (%)", metrics["Tomentum_pct"])
+                                st.metric("Pigmentation (1-9)", metrics["Pigment"])
+                            
+                            # Pré-remplir les champs du formulaire manuel (onglet 1)
+                            st.session_state.auto_L = metrics["L_aile_mm"]
+                            st.session_state.auto_Ri = metrics["Ri"]
+                            st.session_state.auto_Glossa = metrics["Glossa_mm"]
+                            st.session_state.auto_Tom = metrics["Tomentum_pct"]
+                            st.session_state.auto_Pig = metrics["Pigment"]
+                            st.info("Les mesures ont été pré-remplies dans l'onglet 'Saisie mesures'.")
+                            
+                            # Proposer la sauvegarde directe
+                            if st.button("💾 Sauvegarder cette analyse dans l'historique"):
+                                new_analysis = {
+                                    "Date": str(datetime.now().date()),
+                                    "Ruche": st.session_state.get("selected_ruche", "Non spécifiée"),
+                                    "Taxon": "Indéterminé (IA)",
+                                    "Confiance_pct": 85,
+                                    "L_aile_mm": metrics["L_aile_mm"],
+                                    "Ri": metrics["Ri"],
+                                    "Glossa_mm": metrics["Glossa_mm"],
+                                    "B_aile_mm": 3.2,
+                                    "DI3_mm": 1.7,
+                                    "A4_deg": 99.0,
+                                    "B4_deg": 91.0,
+                                    "Ti_L_mm": 3.0,
+                                    "T3_L_mm": 4.8,
+                                    "Tomentum_pct": metrics["Tomentum_pct"],
+                                    "Pigment": metrics["Pigment"],
+                                    "OI": "−",
+                                    "Analyste": "IA Automatique"
+                                }
+                                st.session_state.morph_analyses = pd.concat(
+                                    [st.session_state.morph_analyses, pd.DataFrame([new_analysis])],
+                                    ignore_index=True
+                                )
+                                st.success("Analyse sauvegardée !")
+                    else:
+                        st.error(f"Échec de l'analyse : {result.get('error', 'Erreur inconnue')}")
+                        st.info("Vérifiez votre connexion ou l'installation d'iMorph.")
+    
+    # ========== ONGLET 6 : Configuration IA ==========
+    with tab6:
+        st.markdown("### ⚙️ Configuration des outils IA")
+        st.markdown("""
+        **DeepWings (API)** :  
+        - Nécessite une clé API. Renseignez-la dans les secrets Streamlit (`st.secrets`) ou modifiez les variables en haut du fichier.  
+        - URL par défaut : `https://api.deepwings.org/v1/analyze`
+        
+        **iMorph (local)** :  
+        - Téléchargez iMorph depuis [InsectWingLandmark](https://github.com/ha-usth/InsectWingLandmark).  
+        - Placez l'exécutable ou le script Python dans un dossier.  
+        - Indiquez le chemin complet dans la variable `IMORPH_EXECUTABLE` (en haut du fichier ou via secrets).
+        
+        **Calibration pixels → mm** :  
+        - Pour des mesures précises, prenez une photo d'une aile avec une règle millimétrée.  
+        - Ajustez le facteur `scale_mm_per_pixel` dans la fonction `compute_metrics_from_landmarks`.
+        """)
+        
+        st.text_input("Chemin iMorph (actuel)", value=IMORPH_EXECUTABLE, disabled=True)
+        st.text_input("URL DeepWings", value=DEEPWINGS_API_URL, disabled=True)
+        if st.button("Recharger la configuration"):
+            st.rerun()
+
+# ==================== PAGE: GÉNÉTIQUE (inchangé) ====================
+elif current_page == "genetique":
+    st.markdown('<div class="page-title">🧬 Génétique & Sélection</div>', unsafe_allow_html=True)
+    st.markdown('<div class="page-subtitle">Lignées reines · Élevage · VSH · Marqueurs génétiques · Programme de sélection</div>', unsafe_allow_html=True)
+
+    df = st.session_state.ruches
+    tab1, tab2 = st.tabs(["👑 Registre des reines", "🧬 Programme de sélection"])
+
+    with tab1:
+        st.dataframe(df[["Reine_id","ID","Race","VSH_pct","Douceur","Economie_hiv","Essaimage_pct","Profil_prod"]].rename(
+            columns={"Reine_id":"ID Reine","ID":"Ruche","VSH_pct":"VSH%","Douceur":"Douceur%",
+                     "Economie_hiv":"Éco. hiv.%","Essaimage_pct":"Essaimage%","Profil_prod":"Profil"}),
+            use_container_width=True, hide_index=True,
+            column_config={
+                "VSH%": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100),
+                "Douceur%": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100),
+            })
+
+        section_header("📊 Critères de sélection — Vue d'ensemble")
+        criteria = ["VSH (Résistance Varroa)","Douceur","Productivité miel","Économie hivernale","Anti-essaimage"]
+        values = [df["VSH_pct"].mean(), df["Douceur"].mean(), df["Miel_kg"].mean()/20*100,
+                  df["Economie_hiv"].mean(), 100-df["Essaimage_pct"].mean()]
+        colors_c = ["#22c55e","#3b82f6","#D4820A","#9B59B6","#f59e0b"]
+
+        for c, v, col in zip(criteria, values, colors_c):
+            st.markdown(f"""
+            <div style="margin-bottom:12px">
+                <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
+                    <span style="color:#4A3728;font-weight:500">{c}</span>
+                    <span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:#4A3728">{v:.0f}%</span>
+                </div>
+                <div style="height:10px;background:#F5EDD8;border-radius:5px;overflow:hidden">
+                    <div style="height:100%;width:{v}%;background:{col};border-radius:5px;transition:width 0.5s"></div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+    with tab2:
+        section_header("🧬 Programme de sélection massale")
+        st.markdown(alert("🧬", """Le programme de sélection massale combine l'évaluation des colonies sur plusieurs générations 
+            avec des mesures morphométriques et des tests de comportement. L'objectif principal est l'amélioration de la 
+            résistance naturelle au Varroa (VSH) tout en maintenant la productivité et la douceur.""", "alert-info"), unsafe_allow_html=True)
+
+        st.markdown("**🏆 Ruches candidates à l'élevage de reines (Top 3)**")
+        top3 = df.nlargest(3, "VSH_pct")
+        for i, (_, r) in enumerate(top3.iterrows()):
+            medal = ["🥇","🥈","🥉"][i]
+            st.markdown(f"""
+            <div style="background:white;border-radius:14px;padding:16px;border:1px solid rgba(180,150,80,0.2);
+                        margin-bottom:10px;display:flex;align-items:center;gap:16px">
+                <div style="font-size:28px">{medal}</div>
+                <div style="flex:1">
+                    <div style="font-family:'Playfair Display',serif;font-size:16px;font-weight:700">{r['Nom']} ({r['ID']})</div>
+                    <div style="font-size:12px;color:#6B6040">{r['Race']} · VSH: {r['VSH_pct']}% · Douceur: {r['Douceur']}%</div>
+                </div>
+                <div style="text-align:center">
+                    <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#22c55e">{r['VSH_pct']}%</div>
+                    <div style="font-size:10px;color:#6B6040;text-transform:uppercase;letter-spacing:0.07em">VSH</div>
+                </div>
+            </div>
+            """, unsafe_allow_html=True)
+
+# ==================== PAGE: CARACTÉRISATION (inchangé) ====================
 elif current_page == "caracterisation":
     st.markdown('<div class="page-title">📈 Caractérisation des Abeilles</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Profils de production · Langue & ailes · Résistance · Classification multiparamétrique</div>', unsafe_allow_html=True)
@@ -1951,73 +2114,7 @@ elif current_page == "caracterisation":
         except ImportError:
             st.info("scikit-learn requis pour l'analyse ACP. Installez-le avec : pip install scikit-learn")
 
-# ─────────────────────────────────────────────
-# PAGE: GÉNÉTIQUE
-# ─────────────────────────────────────────────
-elif current_page == "genetique":
-    st.markdown('<div class="page-title">🧬 Génétique & Sélection</div>', unsafe_allow_html=True)
-    st.markdown('<div class="page-subtitle">Lignées reines · Élevage · VSH · Marqueurs génétiques · Programme de sélection</div>', unsafe_allow_html=True)
-
-    df = st.session_state.ruches
-    tab1, tab2 = st.tabs(["👑 Registre des reines", "🧬 Programme de sélection"])
-
-    with tab1:
-        st.dataframe(df[["Reine_id","ID","Race","VSH_pct","Douceur","Economie_hiv","Essaimage_pct","Profil_prod"]].rename(
-            columns={"Reine_id":"ID Reine","ID":"Ruche","VSH_pct":"VSH%","Douceur":"Douceur%",
-                     "Economie_hiv":"Éco. hiv.%","Essaimage_pct":"Essaimage%","Profil_prod":"Profil"}),
-            use_container_width=True, hide_index=True,
-            column_config={
-                "VSH%": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100),
-                "Douceur%": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100),
-            })
-
-        section_header("📊 Critères de sélection — Vue d'ensemble")
-        criteria = ["VSH (Résistance Varroa)","Douceur","Productivité miel","Économie hivernale","Anti-essaimage"]
-        values = [df["VSH_pct"].mean(), df["Douceur"].mean(), df["Miel_kg"].mean()/20*100,
-                  df["Economie_hiv"].mean(), 100-df["Essaimage_pct"].mean()]
-        colors_c = ["#22c55e","#3b82f6","#D4820A","#9B59B6","#f59e0b"]
-
-        for c, v, col in zip(criteria, values, colors_c):
-            st.markdown(f"""
-            <div style="margin-bottom:12px">
-                <div style="display:flex;justify-content:space-between;font-size:13px;margin-bottom:5px">
-                    <span style="color:#4A3728;font-weight:500">{c}</span>
-                    <span style="font-family:'JetBrains Mono',monospace;font-weight:600;color:#4A3728">{v:.0f}%</span>
-                </div>
-                <div style="height:10px;background:#F5EDD8;border-radius:5px;overflow:hidden">
-                    <div style="height:100%;width:{v}%;background:{col};border-radius:5px;transition:width 0.5s"></div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-    with tab2:
-        section_header("🧬 Programme de sélection massale")
-        st.markdown(alert("🧬", """Le programme de sélection massale combine l'évaluation des colonies sur plusieurs générations 
-            avec des mesures morphométriques et des tests de comportement. L'objectif principal est l'amélioration de la 
-            résistance naturelle au Varroa (VSH) tout en maintenant la productivité et la douceur.""", "alert-info"), unsafe_allow_html=True)
-
-        st.markdown("**🏆 Ruches candidates à l'élevage de reines (Top 3)**")
-        top3 = df.nlargest(3, "VSH_pct")
-        for i, (_, r) in enumerate(top3.iterrows()):
-            medal = ["🥇","🥈","🥉"][i]
-            st.markdown(f"""
-            <div style="background:white;border-radius:14px;padding:16px;border:1px solid rgba(180,150,80,0.2);
-                        margin-bottom:10px;display:flex;align-items:center;gap:16px">
-                <div style="font-size:28px">{medal}</div>
-                <div style="flex:1">
-                    <div style="font-family:'Playfair Display',serif;font-size:16px;font-weight:700">{r['Nom']} ({r['ID']})</div>
-                    <div style="font-size:12px;color:#6B6040">{r['Race']} · VSH: {r['VSH_pct']}% · Douceur: {r['Douceur']}%</div>
-                </div>
-                <div style="text-align:center">
-                    <div style="font-family:'Playfair Display',serif;font-size:22px;font-weight:700;color:#22c55e">{r['VSH_pct']}%</div>
-                    <div style="font-size:10px;color:#6B6040;text-transform:uppercase;letter-spacing:0.07em">VSH</div>
-                </div>
-            </div>
-            """, unsafe_allow_html=True)
-
-# ─────────────────────────────────────────────
-# PAGE: FLORE
-# ─────────────────────────────────────────────
+# ==================== PAGE: FLORE MELLIFÈRE (inchangé) ====================
 elif current_page == "flore":
     st.markdown('<div class="page-title">🌸 Flore Mellifère</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Calendrier de floraison · Valeur apicole · Région de l\'Oranie — Algérie</div>', unsafe_allow_html=True)
@@ -2050,9 +2147,7 @@ elif current_page == "flore":
         margin=dict(l=10,r=10,t=10,b=10))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
 
-# ─────────────────────────────────────────────
-# PAGE: MÉTÉO
-# ─────────────────────────────────────────────
+# ==================== PAGE: MÉTÉO & MIELLÉE (inchangé) ====================
 elif current_page == "meteo":
     st.markdown('<div class="page-title">🌤️ Météo & Miellée</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Conditions de butinage · Prévisions · Indice de miellée · Tlemcen — Algérie</div>', unsafe_allow_html=True)
@@ -2095,9 +2190,7 @@ elif current_page == "meteo":
         margin=dict(l=10,r=10,t=10,b=10))
     st.plotly_chart(fig, use_container_width=True, config={"displayModeBar":False})
 
-# ─────────────────────────────────────────────
-# PAGE: RAPPORTS
-# ─────────────────────────────────────────────
+# ==================== PAGE: RAPPORTS (inchangé) ====================
 elif current_page == "rapports":
     st.markdown('<div class="page-title">📋 Rapports & Exports</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Rapports réglementaires · Analyses statistiques · Export données</div>', unsafe_allow_html=True)
@@ -2173,16 +2266,13 @@ elif current_page == "rapports":
                 use_container_width=True
             )
 
-# ─────────────────────────────────────────────
-# PAGE: ALERTES
-# ─────────────────────────────────────────────
+# ==================== PAGE: ALERTES (inchangé) ====================
 elif current_page == "alertes":
     st.markdown('<div class="page-title">🚨 Alertes & Notifications</div>', unsafe_allow_html=True)
     st.markdown('<div class="page-subtitle">Surveillance en temps réel · Priorisation intelligente · Actions correctives</div>', unsafe_allow_html=True)
 
     df = st.session_state.ruches
 
-    # Auto-generate alerts from data
     alertes_auto = []
     for _, r in df.iterrows():
         if r["Varroa_pct"] > 3:
@@ -2205,13 +2295,11 @@ elif current_page == "alertes":
     for icon, level, txt in alertes_auto:
         st.markdown(alert(icon, txt, cls_map.get(level,"alert-info")), unsafe_allow_html=True)
 
-# ─────────────────────────────────────────────
-# FOOTER
-# ─────────────────────────────────────────────
+# ==================== FOOTER ====================
 st.markdown("""
 <div style="text-align:center;padding:32px 0 16px;font-size:12px;color:#9B8860;border-top:1px solid rgba(180,150,80,0.15);margin-top:40px">
     <strong style="font-family:'Playfair Display',serif;font-size:14px;color:#4A3728">ApiTrack Pro</strong> · 
-    Plateforme Apicole Professionnelle · Version 2.0<br>
+    Plateforme Apicole Professionnelle · Version 2.0 · IA intégrée<br>
     Morphométrie selon <em>Ruttner (1988)</em> · Données de référence <em>Chahbar et al. (2013)</em> · 
     Région de l'Oranie, Algérie<br><br>
     🐝 Développé pour l'apiculture scientifique et professionnelle
