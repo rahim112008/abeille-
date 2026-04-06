@@ -2,7 +2,7 @@
 ApiTrack Pro — Plateforme Apicole Ultra-Professionnelle
 Avec persistance SQLite, authentification, suppression de ruches,
 et gestion du profil apiculteur.
-Version sans accents dans les noms de colonnes (compatible SQLite).
+Version robuste avec migration automatique des colonnes.
 """
 
 import streamlit as st
@@ -445,7 +445,7 @@ def hash_password(pwd):
     return hashlib.sha256(pwd.encode()).hexdigest()
 
 def init_db():
-    """Create tables and seed if empty."""
+    """Create tables if they don't exist."""
     conn = sqlite3.connect(DB_PATH)
     c = conn.cursor()
     
@@ -597,6 +597,24 @@ def seed_demo_data(cursor):
     for row in traitements_data:
         cursor.execute("INSERT INTO traitements (Date_debut, Ruche, Produit, Pathologie, Dose, Duree_j, Statut, Progression_pct) VALUES (?,?,?,?,?,?,?,?)", row)
 
+def migrate_db():
+    """Ensure the 'gelee_g' column exists in ruches table. Rename or add if needed."""
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("PRAGMA table_info(ruches)")
+    columns = [col[1] for col in cursor.fetchall()]
+    if "gelee_g" not in columns:
+        # Try to rename from possible old names
+        for old in ["Gelée_g", "Gelee_g"]:
+            if old in columns:
+                cursor.execute(f'ALTER TABLE ruches RENAME COLUMN "{old}" TO gelee_g')
+                break
+        else:
+            # Column does not exist at all, add it
+            cursor.execute("ALTER TABLE ruches ADD COLUMN gelee_g REAL DEFAULT 0")
+    conn.commit()
+    conn.close()
+
 def load_dataframes():
     """Load all tables as DataFrames."""
     conn = sqlite3.connect(DB_PATH)
@@ -732,6 +750,7 @@ if not os.path.exists(DB_PATH):
     init_db()
 else:
     init_db()  # ensure tables exist
+migrate_db()  # fix column name if needed
 
 if "data" not in st.session_state:
     st.session_state.data = load_dataframes()
