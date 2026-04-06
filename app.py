@@ -535,7 +535,7 @@ def seed_demo_data(cursor):
         ("D-09","Zephyr","A. m. ligustica","Plaine des Fleurs",21.5,1.3,17.1,2.0,95,"Bon","R-2024-09",63,88,70,42,"2023-08-15",8,6,34.9,"Miel",6.52,9.61,2.85,52,1,3.28),
     ]
     for row in ruches_data:
-        cursor.execute("INSERT INTO ruches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
+        cursor.execute("INSERT INTO ruches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
     
     # Inspections
     today = datetime.now()
