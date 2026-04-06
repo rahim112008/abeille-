@@ -974,7 +974,7 @@ with st.sidebar:
     """, unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────
-# ADMIN PAGE (Backup/Restore, Delete Hive, Change apiculteur, Password)
+# PAGE: ADMINISTRATION
 # ─────────────────────────────────────────────
 if current_page == "admin":
     st.markdown('<div class="page-title">💾 Administration</div>', unsafe_allow_html=True)
@@ -1020,22 +1020,20 @@ if current_page == "admin":
             st.success("Nom mis à jour")
             st.rerun()
     
-   with tab4:
-    st.markdown("#### Changer le mot de passe")
-    old_pwd = st.text_input("Ancien mot de passe", type="password")
-    new_pwd = st.text_input("Nouveau mot de passe", type="password")
-    confirm = st.text_input("Confirmer", type="password")
-    if st.button("Changer mot de passe"):
-        if "username" not in st.session_state:
-            st.error("Session invalide. Veuillez vous reconnecter.")
-        elif verify_login(st.session_state.username, old_pwd):
-            if new_pwd == confirm and len(new_pwd) >= 4:
-                change_password(st.session_state.username, new_pwd)
-                st.success("Mot de passe modifié")
+    with tab4:
+        st.markdown("#### Changer le mot de passe")
+        old_pwd = st.text_input("Ancien mot de passe", type="password")
+        new_pwd = st.text_input("Nouveau mot de passe", type="password")
+        confirm = st.text_input("Confirmer", type="password")
+        if st.button("Changer mot de passe"):
+            if "username" in st.session_state and verify_login(st.session_state.username, old_pwd):
+                if new_pwd == confirm and len(new_pwd) >= 4:
+                    change_password(st.session_state.username, new_pwd)
+                    st.success("Mot de passe modifié")
+                else:
+                    st.error("Le nouveau mot de passe doit faire au moins 4 caractères et correspondre.")
             else:
-                st.error("Le nouveau mot de passe doit faire au moins 4 caractères et correspondre.")
-        else:
-            st.error("Ancien mot de passe incorrect")
+                st.error("Ancien mot de passe incorrect")
 # ─────────────────────────────────────────────
 # PAGE: DASHBOARD
 # ─────────────────────────────────────────────
