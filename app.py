@@ -2,6 +2,7 @@
 ApiTrack Pro — Plateforme Apicole Ultra-Professionnelle
 Avec persistance SQLite, authentification, suppression de ruches,
 et gestion du profil apiculteur.
+Version sans accents dans les noms de colonnes (compatible SQLite).
 """
 
 import streamlit as st
@@ -452,8 +453,8 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS ruches (
         ID TEXT PRIMARY KEY,
         Nom TEXT, Race TEXT, Site TEXT, Poids_kg REAL, Varroa_pct REAL,
-        Miel_kg REAL, Pollen_kg REAL, Gelée_g REAL, Statut TEXT,
-        Reine_id TEXT, VSH_pct REAL, Douceur REAL, Economie_hiv REAL,
+        Miel_kg REAL, Pollen_kg REAL, gelee_g REAL,
+        Statut TEXT, Reine_id TEXT, VSH_pct REAL, Douceur REAL, Economie_hiv REAL,
         Essaimage_pct REAL, Date_creation TEXT, Cadres_couverts INTEGER,
         Cadres_couvain INTEGER, Temp_int REAL, Profil_prod TEXT,
         Glossa_mm REAL, L_aile_mm REAL, Ri REAL, Tomentum_pct INTEGER,
@@ -535,7 +536,12 @@ def seed_demo_data(cursor):
         ("D-09","Zephyr","A. m. ligustica","Plaine des Fleurs",21.5,1.3,17.1,2.0,95,"Bon","R-2024-09",63,88,70,42,"2023-08-15",8,6,34.9,"Miel",6.52,9.61,2.85,52,1,3.28),
     ]
     for row in ruches_data:
-        cursor.execute("INSERT INTO ruches VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)", row)
+        cursor.execute('''INSERT INTO ruches (
+            ID, Nom, Race, Site, Poids_kg, Varroa_pct, Miel_kg, Pollen_kg, gelee_g,
+            Statut, Reine_id, VSH_pct, Douceur, Economie_hiv, Essaimage_pct,
+            Date_creation, Cadres_couverts, Cadres_couvain, Temp_int, Profil_prod,
+            Glossa_mm, L_aile_mm, Ri, Tomentum_pct, Pigment_scutellum, Ti_L_mm
+        ) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)''', row)
     
     # Inspections
     today = datetime.now()
@@ -836,7 +842,7 @@ def ruche_card_html(r):
                 <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#6B6040">🍯 Miel</div>
             </div>
             <div style="background:#FFF8E6;border-radius:9px;padding:9px">
-                <div style="font-weight:600;font-size:14px;color:{pc}">{r["Pollen_kg"]} kg / {r["Gelée_g"]} g</div>
+                <div style="font-weight:600;font-size:14px;color:{pc}">{r["Pollen_kg"]} kg / {r["gelee_g"]} g</div>
                 <div style="font-size:10px;text-transform:uppercase;letter-spacing:0.05em;color:#6B6040">🌼 Pollen / 👑 GR</div>
             </div>
         </div>
@@ -848,7 +854,7 @@ def production_radar(ruche_row):
     vals = [
         min(ruche_row["Miel_kg"] / 20 * 100, 100),
         min(ruche_row["Pollen_kg"] / 5 * 100, 100),
-        min(ruche_row["Gelée_g"] / 200 * 100, 100),
+        min(ruche_row["gelee_g"] / 200 * 100, 100),
         ruche_row["VSH_pct"],
         ruche_row["Douceur"],
         ruche_row["Economie_hiv"]
@@ -1022,7 +1028,7 @@ elif current_page == "dashboard":
 
     total_miel = df["Miel_kg"].sum()
     total_pollen = df["Pollen_kg"].sum()
-    total_gelee_g = df["Gelée_g"].sum()
+    total_gelee_g = df["gelee_g"].sum()
     ca_miel = (rec[rec["Type"]=="Miel"]["Quantite_kg"] * rec[rec["Type"]=="Miel"]["Prix_kg"]).sum()
     ca_pollen = (rec[rec["Type"]=="Pollen"]["Quantite_kg"] * rec[rec["Type"]=="Pollen"]["Prix_kg"]).sum()
     ca_gelee = (rec[rec["Type"]=="Gelée Royale"]["Quantite_kg"] * rec[rec["Type"]=="Gelée Royale"]["Prix_kg"]).sum()
@@ -1215,7 +1221,7 @@ elif current_page == "ruches":
                         <div><div style="font-size:11px;color:#6B6040;text-transform:uppercase;letter-spacing:0.07em">🌼 Pollen</div>
                              <div style="font-weight:700;font-size:18px;color:#F59E0B;margin-top:3px">{row['Pollen_kg']} kg</div></div>
                         <div><div style="font-size:11px;color:#6B6040;text-transform:uppercase;letter-spacing:0.07em">👑 Gelée R.</div>
-                             <div style="font-weight:700;font-size:18px;color:#9B59B6;margin-top:3px">{row['Gelée_g']} g</div></div>
+                             <div style="font-weight:700;font-size:18px;color:#9B59B6;margin-top:3px">{row['gelee_g']} g</div></div>
                         <div><div style="font-size:11px;color:#6B6040;text-transform:uppercase;letter-spacing:0.07em">🛡️ VSH</div>
                              <div style="font-weight:700;font-size:18px;color:#22C55E;margin-top:3px">{row['VSH_pct']}%</div></div>
                     </div>
@@ -1226,11 +1232,10 @@ elif current_page == "ruches":
 
     with tab2:
         df = st.session_state.data["ruches"]
-        display_cols = ["ID","Nom","Race","Site","Statut","Profil_prod","Poids_kg","Varroa_pct","Miel_kg","Pollen_kg","Gelée_g","VSH_pct"]
-        # Add delete button column
+        display_cols = ["ID","Nom","Race","Site","Statut","Profil_prod","Poids_kg","Varroa_pct","Miel_kg","Pollen_kg","gelee_g","VSH_pct"]
         st.dataframe(
             df[display_cols].rename(columns={"Profil_prod":"Profil","Varroa_pct":"Varroa %",
-                "Miel_kg":"Miel (kg)","Pollen_kg":"Pollen (kg)","Gelée_g":"Gelée (g)","VSH_pct":"VSH %"}),
+                "Miel_kg":"Miel (kg)","Pollen_kg":"Pollen (kg)","gelee_g":"Gelée (g)","VSH_pct":"VSH %"}),
             use_container_width=True, hide_index=True,
             column_config={
                 "Statut": st.column_config.SelectboxColumn(options=["Excellent","Bon","Attention","Critique"]),
@@ -1239,7 +1244,6 @@ elif current_page == "ruches":
                 "VSH %": st.column_config.ProgressColumn(format="%d%%", min_value=0, max_value=100),
             }
         )
-        # Add delete button for each row (outside dataframe)
         st.markdown("#### Supprimer une ruche")
         del_id = st.selectbox("Choisir l'ID de la ruche à supprimer", df["ID"].tolist())
         if st.button("🗑 Supprimer cette ruche", type="primary"):
@@ -1257,8 +1261,8 @@ elif current_page == "ruches":
             marker_color='#D4820A', text=df["Miel_kg"], textposition='outside'))
         fig_comp.add_trace(go.Bar(x=df["ID"], y=df["Pollen_kg"]*5, name="🌼 Pollen (kg×5)",
             marker_color='#F59E0B', text=df["Pollen_kg"], textposition='outside'))
-        fig_comp.add_trace(go.Bar(x=df["ID"], y=df["Gelée_g"]/10, name="👑 Gelée (g/10)",
-            marker_color='#9B59B6', text=df["Gelée_g"].astype(str)+"g", textposition='outside'))
+        fig_comp.add_trace(go.Bar(x=df["ID"], y=df["gelee_g"]/10, name="👑 Gelée (g/10)",
+            marker_color='#9B59B6', text=df["gelee_g"].astype(str)+"g", textposition='outside'))
         fig_comp.update_layout(
             barmode='group', height=360,
             paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(253,250,244,0.5)',
@@ -1270,7 +1274,7 @@ elif current_page == "ruches":
         st.plotly_chart(fig_comp, use_container_width=True, config={"displayModeBar":False})
 
         section_header("🎯 Score global par ruche")
-        df["Score"] = (df["Miel_kg"]/20*25 + df["Pollen_kg"]/5*15 + df["Gelée_g"]/200*15 +
+        df["Score"] = (df["Miel_kg"]/20*25 + df["Pollen_kg"]/5*15 + df["gelee_g"]/200*15 +
                        df["VSH_pct"]/100*25 + df["Douceur"]/100*10 + df["Economie_hiv"]/100*10).clip(0,100)
         fig_score = go.Figure(go.Bar(
             x=df["Score"].round(1), y=df["Nom"], orientation='h',
@@ -1319,7 +1323,7 @@ elif current_page == "ruches":
                     "Varroa_pct": 0.0,
                     "Miel_kg": 0,
                     "Pollen_kg": 0,
-                    "Gelée_g": 0,
+                    "gelee_g": 0,
                     "Statut": nstatut,
                     "Reine_id": nreine if nreine else "À définir",
                     "VSH_pct": 70,
@@ -1690,11 +1694,11 @@ elif current_page == "gelee":
     gr_rec = rec[rec["Type"]=="Gelée Royale"].copy()
 
     c1,c2,c3,c4 = st.columns(4)
-    with c1: st.markdown(metric_card("👑", f"{df['Gelée_g'].sum()} g", "Total produit (2024)", "+35% vs 2023"), unsafe_allow_html=True)
+    with c1: st.markdown(metric_card("👑", f"{df['gelee_g'].sum()} g", "Total produit (2024)", "+35% vs 2023"), unsafe_allow_html=True)
     with c2:
         ca_gr = (gr_rec["Quantite_kg"]*gr_rec["Prix_kg"]).sum() if len(gr_rec)>0 else 0
         st.markdown(metric_card("💰", f"{ca_gr:,.0f} DA", "CA Gelée Royale"), unsafe_allow_html=True)
-    with c3: st.markdown(metric_card("🏆", f"{df['Gelée_g'].max()} g", "Meilleure productrice"), unsafe_allow_html=True)
+    with c3: st.markdown(metric_card("🏆", f"{df['gelee_g'].max()} g", "Meilleure productrice"), unsafe_allow_html=True)
     with c4: st.markdown(metric_card("🔬", "3", "Ruches productrices"), unsafe_allow_html=True)
 
     st.markdown("<br>", unsafe_allow_html=True)
@@ -1709,11 +1713,11 @@ elif current_page == "gelee":
         c_l, c_r = st.columns(2)
         with c_l:
             section_header("📊 Production par ruche (g)")
-            df_gr = df[df["Gelée_g"]>0].sort_values("Gelée_g", ascending=True)
+            df_gr = df[df["gelee_g"]>0].sort_values("gelee_g", ascending=True)
             fig = go.Figure(go.Bar(
-                x=df_gr["Gelée_g"], y=df_gr["Nom"], orientation='h',
+                x=df_gr["gelee_g"], y=df_gr["Nom"], orientation='h',
                 marker_color='#9B59B6',
-                text=[f"{v} g" for v in df_gr["Gelée_g"]], textposition='inside',
+                text=[f"{v} g" for v in df_gr["gelee_g"]], textposition='inside',
                 textfont=dict(color='white',size=11)
             ))
             fig.update_layout(height=280, paper_bgcolor='rgba(0,0,0,0)', plot_bgcolor='rgba(250,245,255,0.5)',
@@ -2060,12 +2064,12 @@ elif current_page == "caracterisation":
         with c2:
             section_header("📊 Comparaison des profils")
             fig = go.Figure()
-            metrics = {"Miel (kg)": "Miel_kg", "Pollen (kg×3)": "Pollen_kg", "Gelée R. (g/10)": "Gelée_g"}
+            metrics = {"Miel (kg)": "Miel_kg", "Pollen (kg×3)": "Pollen_kg", "Gelée R. (g/10)": "gelee_g"}
             for profil in df["Profil_prod"].unique():
                 sub = df[df["Profil_prod"]==profil]
                 fig.add_trace(go.Scatter(
                     x=list(metrics.keys()),
-                    y=[sub["Miel_kg"].mean(), sub["Pollen_kg"].mean()*3, sub["Gelée_g"].mean()/10],
+                    y=[sub["Miel_kg"].mean(), sub["Pollen_kg"].mean()*3, sub["gelee_g"].mean()/10],
                     name=f"{PROFIL_ICONS.get(profil,'')} {profil}",
                     mode='lines+markers', fill='toself',
                     line=dict(width=2), marker=dict(size=8)
@@ -2089,7 +2093,7 @@ elif current_page == "caracterisation":
                         <div style="font-size:11px;font-weight:600;color:#6B6040;text-transform:uppercase;margin-bottom:10px">🏭 Production</div>
                         <div style="margin-bottom:6px"><span style="color:#D4820A;font-weight:600">🍯 {r['Miel_kg']} kg</span> de miel</div>
                         <div style="margin-bottom:6px"><span style="color:#F59E0B;font-weight:600">🌼 {r['Pollen_kg']} kg</span> de pollen</div>
-                        <div><span style="color:#9B59B6;font-weight:600">👑 {r['Gelée_g']} g</span> de gelée royale</div>
+                        <div><span style="color:#9B59B6;font-weight:600">👑 {r['gelee_g']} g</span> de gelée royale</div>
                     </div>""", unsafe_allow_html=True)
                 with col_b:
                     st.markdown(f"""
@@ -2237,7 +2241,7 @@ elif current_page == "caracterisation":
 
         section_header("🏆 Classement général des ruches")
         df["Score_VSH"] = df["VSH_pct"]
-        df["Score_prod"] = (df["Miel_kg"]/20*40 + df["Pollen_kg"]/5*20 + df["Gelée_g"]/200*20 +
+        df["Score_prod"] = (df["Miel_kg"]/20*40 + df["Pollen_kg"]/5*20 + df["gelee_g"]/200*20 +
                             df["VSH_pct"]/100*10 + df["Douceur"]/100*10).clip(0,100).round(1)
         df_rank = df[["Nom","Race","Profil_prod","Score_prod","VSH_pct","Douceur","Varroa_pct"]].sort_values("Score_prod",ascending=False)
         df_rank.columns = ["Ruche","Race","Profil","Score global","VSH%","Douceur%","Varroa%"]
@@ -2258,7 +2262,7 @@ elif current_page == "caracterisation":
             from sklearn.decomposition import PCA
             from sklearn.preprocessing import StandardScaler
 
-            features = ["L_aile_mm","Ri","Glossa_mm","Tomentum_pct","Pollen_kg","Miel_kg","Gelée_g","VSH_pct"]
+            features = ["L_aile_mm","Ri","Glossa_mm","Tomentum_pct","Pollen_kg","Miel_kg","gelee_g","VSH_pct"]
             X = df[features].values
             scaler = StandardScaler()
             X_scaled = scaler.fit_transform(X)
@@ -2461,7 +2465,7 @@ elif current_page == "rapports":
     with c1:
         miel_total = df["Miel_kg"].sum()
         pol_total = df["Pollen_kg"].sum()
-        gr_total = df["Gelée_g"].sum()
+        gr_total = df["gelee_g"].sum()
         ca_total = rec.apply(lambda r: r["Quantite_kg"]*r["Prix_kg"], axis=1).sum()
         st.markdown(f"""
         <div class="morph-card">
@@ -2543,8 +2547,8 @@ elif current_page == "alertes":
             alertes_auto.append(("🔴","danger",f"CRITIQUE — {r['Nom']} ({r['ID']}) : Statut général critique. Inspection urgente."))
         if r["VSH_pct"] < 60:
             alertes_auto.append(("🟡","warning",f"SÉLECTION — {r['Nom']} ({r['ID']}) : VSH {r['VSH_pct']}% — Sous le seuil de 60%. Renouveler la reine."))
-        if r["Gelée_g"] > 150 and r["Profil_prod"] == "Gelée Royale":
-            alertes_auto.append(("👑","royal",f"RÉCOLTE — {r['Nom']} ({r['ID']}) : Excellente productrice de gelée royale ({r['Gelée_g']}g). Planifier la prochaine récolte."))
+        if r["gelee_g"] > 150 and r["Profil_prod"] == "Gelée Royale":
+            alertes_auto.append(("👑","royal",f"RÉCOLTE — {r['Nom']} ({r['ID']}) : Excellente productrice de gelée royale ({r['gelee_g']}g). Planifier la prochaine récolte."))
 
     alertes_auto.append(("📦","info","STOCK — Cire gaufrée : Niveau critique (1.2 kg restant, seuil : 5 kg). Commander rapidement."))
     alertes_auto.append(("📅","info","RAPPEL : Traitement anti-varroa hivernal recommandé. Prévoir entre novembre et décembre."))
