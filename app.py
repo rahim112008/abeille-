@@ -452,7 +452,7 @@ def init_db():
     c.execute('''CREATE TABLE IF NOT EXISTS ruches (
         ID TEXT PRIMARY KEY,
         Nom TEXT, Race TEXT, Site TEXT, Poids_kg REAL, Varroa_pct REAL,
-        Miel_kg REAL, Pollen_kg REAL, Gelee_g REAL, Statut TEXT,
+        Miel_kg REAL, Pollen_kg REAL, Gelée_g REAL, Statut TEXT,
         Reine_id TEXT, VSH_pct REAL, Douceur REAL, Economie_hiv REAL,
         Essaimage_pct REAL, Date_creation TEXT, Cadres_couverts INTEGER,
         Cadres_couvain INTEGER, Temp_int REAL, Profil_prod TEXT,
